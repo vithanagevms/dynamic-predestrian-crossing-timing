@@ -4,8 +4,6 @@ import time
 from ultralytics import YOLO
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
-import traffic_light
-
 
 # Load YOLO model (pre-trained on COCO dataset)
 model = YOLO("yolov8n.pt")  # Use 'yolov8s.pt' for better accuracy
@@ -30,24 +28,43 @@ frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 # Dictionary to track pedestrian data
 pedestrian_data = {}
 
-# Define exit zones (adjust based on your video)
-exit_y_top = 50  # Top of the frame (if moving up)
-exit_y_bottom = frame_height - 50  # Bottom of the frame (if moving down)
-
-
-
 frame_count = 0
 frame_skip = 3
 
 
 # Define pedestrian crossing area (Modify based on your video)
-crossing_area = [(282, 327), (561, 271), (341,227), (208, 228)];
+UPPER_LINE = [(341,227), (208, 228)]
+LOWER_LINE = [(282, 327), (561, 271)]
+crossing_area = [
+    UPPER_LINE[0],  # Top-left
+    UPPER_LINE[1],  # Top-right
+    LOWER_LINE[0],  # Bottom-left
+    LOWER_LINE[1],  # Bottom-right
+]
+
+# Define exit zones (adjust based on your video)
+exit_y_top = (UPPER_LINE[1][1] + UPPER_LINE[0][1]) //2 # Top of the frame (if moving up)
+exit_y_bottom = (LOWER_LINE[1][1] + LOWER_LINE[0][1]) //2  # Bottom of the frame (if moving down)
+total_distance = exit_y_bottom - exit_y_top
 
 def print_cordinates(event, x, y, flags, param):
     if event == cv2.EVENT_MOUSEMOVE :  
         colorsBGR = [x, y]
         print(colorsBGR)
 
+direction_tracker = {}
+pedestrian_times = {}
+def update_direction(pedestrian_id, new_center):
+    if pedestrian_id in direction_tracker:
+        prev_center = direction_tracker[pedestrian_id]
+        dx, dy = new_center[0] - prev_center[0], new_center[1] - prev_center[1]
+        # if abs(dx) > abs(dy):
+        #     direction = "Right" if dx > 0 else "Left"
+        # else:
+        direction = "Down" if dy > 0 else "Up"
+        #print(f"Pedestrian {pedestrian_id} moving: {direction}")
+        return direction
+    direction_tracker[pedestrian_id] = new_center  # Update stored position
 
 
 while cap.isOpened():
@@ -69,7 +86,8 @@ while cap.isOpened():
     cv2.fillPoly(overlay, [np.array(crossing_area, np.int32)], (255, 0, 0))  # Blue color
     cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)  # Transparency effect
     
-    
+    cv2.line(frame, (0, exit_y_top), (640, exit_y_top), (125,125,0), 2 )
+    cv2.line(frame, (0, exit_y_bottom), (640, exit_y_bottom), (125,125,0), 2 )
 
     detections = []
     for result in results:
@@ -93,8 +111,15 @@ while cap.isOpened():
         x1, y1, x2, y2 = map(int, track.to_ltwh())
 
         # Compute center of the person for tracking
-        center_x = (x1 + x2) // 2
-        center_y = (y1 + y2) // 2
+        center_x = x2
+        center_y = y2
+        
+        # Track pedestrian entry/exit time
+        crossing_time = 0
+        if track_id not in pedestrian_times:
+            pedestrian_times[track_id] = time.time()
+        else:
+            crossing_time = time.time() - pedestrian_times[track_id]
 
         # Get previous position for speed calculation
         if track_id in pedestrian_data:
@@ -111,13 +136,17 @@ while cap.isOpened():
             speed_kmh = 0
 
         # Predict movement direction (up or down)
-        direction = "Up" if center_y < frame_height // 2 else "Down"
+        #direction = "Up" if center_y < frame_height // 2 else "Down"
+        direction = update_direction(track_id, (center_x, center_y))
 
+        relative_speed = 0
         # Calculate distance to exit
         if direction == "Up":
             distance_to_exit = center_y - exit_y_top
         else:
             distance_to_exit = exit_y_bottom - center_y
+        if crossing_time > 0: 
+            relative_speed = distance_to_exit/crossing_time
 
         # Store the latest position and timestamp
         pedestrian_data[track_id] = (center_x, center_y, time.time())
@@ -132,6 +161,8 @@ while cap.isOpened():
         cv2.putText(frame, f"Distance: {distance_to_exit} px", (x1, y2 + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         cv2.putText(frame, f"Dir: {direction}", (x1, y2 + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
+        
+        print(f"ID:{track_id}, Speed:{speed_kmh}, Distance:{distance_to_exit}, Dir:{direction}, Relative Sp:{relative_speed}")
     # Write frame to output video
     #output_video.write(frame)
     
@@ -139,7 +170,7 @@ while cap.isOpened():
     cv2.imshow("YOLO + DeepSORT Tracking", frame)
     cv2.setMouseCallback('YOLO + DeepSORT Tracking', print_cordinates)
     
-    if cv2.waitKey(0) & 0xFF == ord('q'):
+    if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 cap.release()
