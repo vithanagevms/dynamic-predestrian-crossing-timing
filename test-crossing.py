@@ -11,7 +11,7 @@ model = YOLO("yolov8n.pt")  # Use 'yolov8s.pt' for a more accurate model
 tracker = DeepSort(max_age=30)  # Tracks objects for up to 30 frames
 
 # Load video
-video_path = "v1.mp4"
+video_path = "videos/c1/c1.mp4"
 cap = cv2.VideoCapture(video_path)
 
 
@@ -44,7 +44,7 @@ while cap.isOpened():
             cls = int(box.cls[0].item())
 
             # Check if the detected object is a person (COCO class 0)
-            if cls == 0 and conf > 0.4:
+            if cls == 0 and conf > 0.6:
                 detections.append(([x1, y1, x2, y2], conf, None))
 
     # Track pedestrians using DeepSORT
