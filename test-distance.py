@@ -11,17 +11,20 @@ model = YOLO("yolov8n.pt")  # Use 'yolov8s.pt' for better accuracy
 # Initialize DeepSORT Tracker
 tracker = DeepSort(max_age=30)  # Tracks objects for up to 30 frames
 
-# Video Path
-video_path = "videos/s2/Cha_2.mp4"
-video_path = "videos/s2/Han_5.mp4"
-cap = cv2.VideoCapture(video_path)
 
+video_profile = {
+    "path":"videos/s2/Han_5.mp4",
+    "UPPER_LINE" : [(341,227), (208, 228)],
+    "LOWER_LINE" : [(282, 327), (561, 271)],
+    "rotate" : cv2.ROTATE_180
+}
+cap = cv2.VideoCapture(video_profile["path"])
 
 # Get video properties
 fps = int(cap.get(cv2.CAP_PROP_FPS))
 frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
+print(f"fps:{fps}, fw:{frame_width}, fh:{frame_height}")
 # Define output video writer
 ##output_video = cv2.VideoWriter("output.mp4", cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
 
@@ -33,18 +36,18 @@ frame_skip = 3
 
 
 # Define pedestrian crossing area (Modify based on your video)
-UPPER_LINE = [(341,227), (208, 228)]
-LOWER_LINE = [(282, 327), (561, 271)]
+print(video_profile)
+
 crossing_area = [
-    UPPER_LINE[0],  # Top-left
-    UPPER_LINE[1],  # Top-right
-    LOWER_LINE[0],  # Bottom-left
-    LOWER_LINE[1],  # Bottom-right
+    video_profile["UPPER_LINE"][0],  # Top-left
+    video_profile["UPPER_LINE"][1],  # Top-right
+    video_profile["LOWER_LINE"][0],  # Bottom-left
+    video_profile["LOWER_LINE"][1],  # Bottom-right
 ]
 
 # Define exit zones (adjust based on your video)
-exit_y_top = (UPPER_LINE[1][1] + UPPER_LINE[0][1]) //2 # Top of the frame (if moving up)
-exit_y_bottom = (LOWER_LINE[1][1] + LOWER_LINE[0][1]) //2  # Bottom of the frame (if moving down)
+exit_y_top = (video_profile["UPPER_LINE"][1][1] + video_profile["UPPER_LINE"][0][1]) //2 # Top of the frame (if moving up)
+exit_y_bottom = (video_profile["LOWER_LINE"][1][1] + video_profile["LOWER_LINE"][0][1]) //2  # Bottom of the frame (if moving down)
 total_distance = exit_y_bottom - exit_y_top
 
 def print_cordinates(event, x, y, flags, param):
@@ -76,7 +79,8 @@ while cap.isOpened():
         continue
     
     frame = cv2.resize(frame, (640, 360))  # Reduce image size
-    frame = cv2.rotate(frame, cv2.ROTATE_180);
+    if video_profile["rotate"] is not None:
+        frame = cv2.rotate(frame, video_profile["rotate"])
 
     # Run YOLO detection
     results = model(frame, classes=[0])
@@ -129,7 +133,7 @@ while cap.isOpened():
 
             if time_diff > 0:
                 speed_px_per_sec = distance_px / time_diff
-                speed_kmh = (speed_px_per_sec * fps * 3.6) / 100  # Convert to km/h
+                speed_kmh = (speed_px_per_sec * (fps/frame_skip) * 3.6) / 100  # Convert to km/h
             else:
                 speed_kmh = 0
         else:
@@ -145,6 +149,7 @@ while cap.isOpened():
             distance_to_exit = center_y - exit_y_top
         else:
             distance_to_exit = exit_y_bottom - center_y
+            
         if crossing_time > 0: 
             relative_speed = distance_to_exit/crossing_time
 
@@ -170,8 +175,13 @@ while cap.isOpened():
     cv2.imshow("YOLO + DeepSORT Tracking", frame)
     cv2.setMouseCallback('YOLO + DeepSORT Tracking', print_cordinates)
     
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    # if cv2.waitKey(1) & 0xFF == ord('q'):
+    #     break
+    key = cv2.waitKey(1)
+    if key == ord('q'):
         break
+    if key == ord('p'):
+        cv2.waitKey(-1) #wait until any key is pressed
 
 cap.release()
 #output_video.release()
