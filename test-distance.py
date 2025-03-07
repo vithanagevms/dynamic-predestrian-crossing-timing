@@ -12,12 +12,23 @@ model = YOLO("yolov8n.pt")  # Use 'yolov8s.pt' for better accuracy
 tracker = DeepSort(max_age=30)  # Tracks objects for up to 30 frames
 
 
+# video_profile = {
+#     "path":"videos/s2/Han_5.mp4",
+#     "UPPER_LINE" : [(341,227), (208, 228)],
+#     "LOWER_LINE" : [(282, 327), (561, 271)],
+#     "rotate" : cv2.ROTATE_180,
+#     "distance": 10000 #CM unit
+# }
+
 video_profile = {
-    "path":"videos/s2/Han_5.mp4",
-    "UPPER_LINE" : [(341,227), (208, 228)],
-    "LOWER_LINE" : [(282, 327), (561, 271)],
-    "rotate" : cv2.ROTATE_180
+    "path":"videos/s2/Han_4.mp4",
+    "UPPER_LINE" : [(160, 386), (35, 385)],
+    "LOWER_LINE" : [(124, 497), (350, 491)],
+    "rotate" : cv2.ROTATE_90_CLOCKWISE,
+    "distance": 10000 # CM unit
 }
+
+
 cap = cv2.VideoCapture(video_profile["path"])
 
 # Get video properties
@@ -32,7 +43,7 @@ print(f"fps:{fps}, fw:{frame_width}, fh:{frame_height}")
 pedestrian_data = {}
 
 frame_count = 0
-frame_skip = 3
+frame_skip = 20
 
 
 # Define pedestrian crossing area (Modify based on your video)
@@ -75,7 +86,8 @@ while cap.isOpened():
     if not ret:
         break
     frame_count += 1
-    if(frame_count % frame_skip == 0):
+    if(frame_count % frame_skip != 0):
+        # print(f"SKIPPED {frame_count}")
         continue
     
     frame = cv2.resize(frame, (640, 360))  # Reduce image size
@@ -124,7 +136,8 @@ while cap.isOpened():
             pedestrian_times[track_id] = time.time()
         else:
             crossing_time = time.time() - pedestrian_times[track_id]
-
+            
+        speed_px_per_sec = 0
         # Get previous position for speed calculation
         if track_id in pedestrian_data:
             prev_x, prev_y, prev_time = pedestrian_data[track_id]
@@ -158,16 +171,19 @@ while cap.isOpened():
 
         # Draw bounding box and ID
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, f"ID: {track_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        # cv2.putText(frame, f"ID: {track_id}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
         cv2.circle(frame, (x2, y2), 5, (125, 125,0))
 
         # Display speed and distance
-        cv2.putText(frame, f"Speed: {speed_kmh:.1f} km/h", (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        cv2.putText(frame, f"Distance: {distance_to_exit} px", (x1, y2 + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        cv2.putText(frame, f"Dir: {direction}", (x1, y2 + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-
-        
-        print(f"ID:{track_id}, Speed:{speed_kmh}, Distance:{distance_to_exit}, Dir:{direction}, Relative Sp:{relative_speed}")
+        #cv2.putText(frame, f"Speed: {speed_kmh:.1f} km/h", (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        #cv2.putText(frame, f"Distance: {distance_to_exit} px", (x1, y2 + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(frame, f"ID: {track_id} Dir: {direction}", (x1, y2 + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+ 
+        estimated_time_remaing = 999999
+        if speed_px_per_sec > 0:
+            estimated_time_remaing = distance_to_exit / speed_px_per_sec
+            
+        print(f"ID:{track_id}, Speed:{speed_kmh}, Distance:{distance_to_exit}, Dir:{direction}, time: {crossing_time}, Relative Sp:{relative_speed}, Estimated Time remaing: {estimated_time_remaing}")
     # Write frame to output video
     #output_video.write(frame)
     
