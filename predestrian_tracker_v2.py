@@ -42,6 +42,14 @@ class PedestrianTracker:
         self.completed_pedestrians = set()
         self.pedestrian_estimates = {}
         
+        # Traffic light system
+        self.traffic_light_state = "BLINKING_GREEN"  # Initial state
+        self.traffic_light_blink_interval = 0.5  # seconds
+        self.last_blink_time = time.time()
+        self.blink_on = True
+        self.estimated_completion_time = None
+        self.traffic_light_start_time = None
+        
         # Load models
         self.detection_model = YOLO(yolo_model)
         self.tracker = DeepSort(max_age=10)  # Tracks objects for up to 10 frames
@@ -221,6 +229,12 @@ class PedestrianTracker:
             self.estimation_triggered = True
             slowest_id, completion_time = self._estimate_slowest_pedestrian_completion()
             
+            # Update traffic light system
+            if slowest_id is not None:
+                self.traffic_light_state = "COUNTDOWN"
+                self.estimated_completion_time = completion_time
+                self.traffic_light_start_time = current_time
+            
             print(f"\n===== ESTIMATION AFTER {self.estimation_delay} SECONDS =====")
             print(f"Time since first pedestrian entered: {current_time - self.zone_first_entry_time:.2f} seconds")
             print(f"Number of pedestrians in zone: {len(self.current_pedestrians_in_zone)}")
@@ -229,9 +243,16 @@ class PedestrianTracker:
                 print(f"Slowest pedestrian ID: {slowest_id}")
                 print(f"Estimated completion time: {completion_time:.2f} seconds")
                 print(f"Estimated completion at: {time.ctime(current_time + completion_time)}")
+                print(f"Traffic light changed to COUNTDOWN mode, will count for {completion_time:.2f} seconds")
             else:
                 print("No valid estimations available yet")
             print("=======================================\n")
+        
+        # Update traffic light if all pedestrians have left the zone
+        if self.estimation_triggered and len(self.current_pedestrians_in_zone) == 0:
+            if self.traffic_light_state != "GREEN":
+                print("All pedestrians have left the zone, traffic light changed to GREEN")
+                self.traffic_light_state = "GREEN"
     
     def _estimate_slowest_pedestrian_completion(self) -> Tuple[Optional[int], float]:
         """
@@ -266,15 +287,79 @@ class PedestrianTracker:
         # Add estimation information to the top of the frame
         if self.zone_first_entry_time is not None:
             cv2.putText(frame, f"Zone Active: {len(self.current_pedestrians_in_zone)} pedestrians", 
-                      (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                      (160, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             
             # Show estimation after trigger
             if self.estimation_triggered:
                 slowest_id, completion_time = self._estimate_slowest_pedestrian_completion()
                 if slowest_id is not None:
                     cv2.putText(frame, f"Slowest: ID {slowest_id} - Est. {completion_time:.1f}s", 
-                              (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                              (160, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        
+        # Draw traffic light in the top-left corner
+        frame = self._draw_traffic_light(frame)
+        
+        return frame
+    
+    def _draw_traffic_light(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Draw a dynamic traffic light in the top-left corner based on the current state.
+        
+        Args:
+            frame: Input video frame
+            
+        Returns:
+            Frame with traffic light visualization
+        """
+        current_time = time.time()
+        light_x, light_y = 30, 60  # Position
+        light_radius = 20  # Size
+        
+        # Draw traffic light background
+        cv2.rectangle(frame, (10, 10), (light_x * 2, light_y + light_radius + 10), (50, 50, 50), -1)
+        cv2.rectangle(frame, (10, 10), (light_x * 2, light_y + light_radius + 10), (0, 0, 0), 2)
+        
+        # Update blink state
+        if current_time - self.last_blink_time > self.traffic_light_blink_interval:
+            self.blink_on = not self.blink_on
+            self.last_blink_time = current_time
+        
+        # Draw appropriate traffic light based on state
+        if self.traffic_light_state == "BLINKING_GREEN":
+            light_color = (0, 255, 0) if self.blink_on else (0, 100, 0)
+            cv2.circle(frame, (light_x, light_y), light_radius, light_color, -1)
+            cv2.circle(frame, (light_x, light_y), light_radius, (0, 0, 0), 2)
+            
+            # Add text label
+            cv2.putText(frame, "WAIT", (light_x - 18, light_y + 5), 
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+        elif self.traffic_light_state == "COUNTDOWN":
+            # Solid red light
+            cv2.circle(frame, (light_x, light_y), light_radius, (0, 0, 255), -1)
+            cv2.circle(frame, (light_x, light_y), light_radius, (0, 0, 0), 2)
+            
+            # Calculate remaining time
+            if self.traffic_light_start_time and self.estimated_completion_time:
+                elapsed = current_time - self.traffic_light_start_time
+                remaining = max(0, self.estimated_completion_time - elapsed)
                 
+                # Display countdown
+                countdown_text = f"{int(remaining)}"
+                text_size = cv2.getTextSize(countdown_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                cv2.putText(frame, countdown_text, 
+                          (light_x - text_size[0]//2, light_y + 5), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+        elif self.traffic_light_state == "GREEN":
+            # Solid green light
+            cv2.circle(frame, (light_x, light_y), light_radius, (0, 255, 0), -1)
+            cv2.circle(frame, (light_x, light_y), light_radius, (0, 0, 0), 2)
+            
+            # Add text label
+            cv2.putText(frame, "GO", (light_x - 10, light_y + 5), 
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+            
         return frame
     
     def _visualize_zones(self, frame: np.ndarray) -> np.ndarray:
@@ -343,7 +428,7 @@ class PedestrianTracker:
             active_pedestrian_ids.add(track_id)
             ltwh = track.to_ltwh()
             x1, y1, x2, y2 = map(int, ltwh)
-            #x2, y2 = x1 + w, y1 + h
+            # x2, y2 = x1 + w, y1 + h
             
             # Compute bottom center of the person for tracking
             object_bottom_x = (x1 + x2) // 2
@@ -551,6 +636,15 @@ class PedestrianTracker:
                     break
                 elif key == ord('p'):
                     cv2.waitKey(-1)  # Wait until any key is pressed (pause)
+                elif key == ord('r'):
+                    # Reset the traffic light system
+                    print("Traffic light system reset")
+                    self.traffic_light_state = "BLINKING_GREEN"
+                    self.zone_first_entry_time = None
+                    self.estimation_triggered = False
+                    self.current_pedestrians_in_zone.clear()
+                    self.completed_pedestrians.clear()
+                    self.pedestrian_estimates.clear()
                 
         finally:
             # Clean up resources
@@ -616,6 +710,7 @@ def main():
         
         # Set custom parameters for the estimation system if needed
         tracker.estimation_delay = 5  # seconds after first entry to trigger estimation
+        tracker.traffic_light_blink_interval = 0.5  # seconds between blinks
         
         # Run the tracker
         tracker.run()
