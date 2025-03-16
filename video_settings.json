@@ -1,0 +1,27 @@
+[
+    {
+        "path": "C:/Yoobee/Yoobee-ITS/dynamic-predestrian-crossing-timing/videos/s3/Cha_01.mp4",
+        "rotate": 0,
+        "top_left": [
+            30,
+            205
+        ],
+        "top_right": [
+            229,
+            199
+        ],
+        "bottom_left": [
+            206,
+            352
+        ],
+        "bottom_right": [
+            573,
+            270
+        ],
+        "distance": "1000",
+        "videosize": [
+            640,
+            360
+        ]
+    }
+]
