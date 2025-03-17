@@ -3,6 +3,8 @@ import numpy as np
 import time
 import json
 import logging
+import os
+import csv
 from typing import Dict, List, Tuple, Optional, Union
 from ultralytics import YOLO
 from deep_sort_realtime.deepsort_tracker import DeepSort
@@ -13,7 +15,8 @@ class PedestrianTracker:
     Implements OOP principles for better code organization and maintainability.
     """
     
-    def __init__(self, config_path: str = "video_settings.json", yolo_model: str = "yolov8n.pt", frame_skip: int = 5):
+    def __init__(self, config_path: str = "video_settings.json", yolo_model: str = "yolov8n.pt", frame_skip: int = 5, 
+                 export_video: bool = False, export_path: str = "output_video.mp4", enable_benchmarking: bool = False):
         """
         Initialize the PedestrianTracker with configuration settings.
         
@@ -21,6 +24,9 @@ class PedestrianTracker:
             config_path: Path to the JSON configuration file
             yolo_model: YOLO model to use for detection
             frame_skip: Number of frames to skip between processing
+            export_video: Whether to export the processed video
+            export_path: Path to save the exported video
+            enable_benchmarking: Whether to enable performance benchmarking
         """
         # Configure logging
         logging.getLogger("ultralytics").setLevel(logging.CRITICAL)  # Hide YOLO logs
@@ -37,7 +43,7 @@ class PedestrianTracker:
         # Estimation system parameters
         self.zone_first_entry_time = None
         self.estimation_triggered = False
-        self.estimation_delay = 5  # seconds before checking slowest pedestrian
+        self.estimation_delay = 10  # seconds before checking slowest pedestrian
         self.current_pedestrians_in_zone = set()
         self.completed_pedestrians = set()
         self.pedestrian_estimates = {}
@@ -49,6 +55,20 @@ class PedestrianTracker:
         self.blink_on = True
         self.estimated_completion_time = None
         self.traffic_light_start_time = None
+        
+        # Video export parameters
+        self.export_video = export_video
+        self.export_path = export_path
+        self.video_writer = None
+        
+        # Load configuration
+        self.video_profile = self._load_config(config_path)
+        
+        # Setup video capture
+        self.cap = self._setup_video_capture()
+        
+        # Define tracking zones based on configuration
+        self._setup_tracking_zones()
         
         # Load models
         self.detection_model = YOLO(yolo_model)
@@ -62,6 +82,23 @@ class PedestrianTracker:
         
         # Define tracking zones based on configuration
         self._setup_tracking_zones()
+        
+        # Benchmarking parameters
+        self.enable_benchmarking = enable_benchmarking
+        if self.enable_benchmarking:
+            self.benchmarks = {
+                'detection_latency': [],
+                'tracking_update_latency': [],
+                'prediction_computation': [],
+                'signal_control_decision': [],
+                'total_system_response': [],
+                'frame_processing_time': []
+            }
+            self.frame_start_time = None
+            self.detection_start_time = None
+            self.tracking_start_time = None
+            self.prediction_start_time = None
+            self.signal_decision_start_time = None
     
     def _load_config(self, config_path: str) -> dict:
         """
@@ -107,6 +144,19 @@ class PedestrianTracker:
             self.frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             self.frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             print(f"Video properties - FPS: {self.fps}, Width: {self.frame_width}, Height: {self.frame_height}")
+            
+            # Setup video writer if export is enabled
+            if self.export_video:
+                # Use 640x360 as the output resolution since we're processing at that size
+                self.output_width, self.output_height = 640, 360
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Use mp4v codec
+                self.video_writer = cv2.VideoWriter(
+                    self.export_path,
+                    fourcc,
+                    self.fps / self.frame_skip,  # Adjust FPS based on frame skip
+                    (self.output_width, self.output_height)
+                )
+                print(f"Video export enabled. Will save to: {self.export_path}")
             
             return cap
         except Exception as e:
@@ -177,6 +227,11 @@ class PedestrianTracker:
         Returns:
             Processed frame with visualization
         """
+        
+        current_time = time.time()
+        if self.enable_benchmarking:
+            self.frame_start_time = current_time
+        
         # Resize frame for faster processing
         frame = cv2.resize(frame, (640, 360))
         
@@ -189,8 +244,14 @@ class PedestrianTracker:
             elif self.video_profile["rotate"] == 270:
                 frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
         
+        if self.enable_benchmarking:
+            self.detection_start_time = time.time()
         # Run detection (only people class for optimum resource allocation)
         results = self.detection_model(frame, classes=[0])
+        
+        if self.enable_benchmarking:
+            detection_end_time = time.time()
+            self.benchmarks['detection_latency'].append(detection_end_time - self.detection_start_time)
         
         # Visualize crossing area and exit zones
         frame = self._visualize_zones(frame)
@@ -199,10 +260,39 @@ class PedestrianTracker:
         detections = self._extract_detections(results)
         
         # Track pedestrians using DeepSORT
+        if self.enable_benchmarking:
+            self.tracking_start_time = time.time()
+        # Track pedestrians using DeepSORT
         tracked_objects = self.tracker.update_tracks(detections, frame=frame)
         
+        if self.enable_benchmarking:
+            tracking_end_time = time.time()
+            self.benchmarks['tracking_update_latency'].append(tracking_end_time - self.tracking_start_time)
+        
+        # Process and visualize each tracked pedestrian
+        if self.enable_benchmarking:
+            self.prediction_start_time = time.time()
         # Process and visualize each tracked pedestrian
         frame = self._process_tracks(frame, tracked_objects)
+        
+        if self.enable_benchmarking:
+            prediction_end_time = time.time()
+            self.benchmarks['prediction_computation'].append(prediction_end_time - self.prediction_start_time)
+            self.signal_decision_start_time = time.time()
+        
+        # Update estimation logic
+        # This would be where your signal control decisions would be made
+        
+        if self.enable_benchmarking:
+            signal_decision_end_time = time.time()
+            frame_end_time = time.time()
+            
+            self.benchmarks['signal_control_decision'].append(signal_decision_end_time - self.signal_decision_start_time)
+            self.benchmarks['total_system_response'].append(signal_decision_end_time - self.detection_start_time)
+            self.benchmarks['frame_processing_time'].append(frame_end_time - self.frame_start_time)
+            
+            # Add benchmark info to the frame if enabled
+            frame = self._add_benchmark_info(frame)
         
         return frame
     
@@ -594,6 +684,193 @@ class PedestrianTracker:
         
         return frame
     
+    def _visualize_pedestrian(self, frame: np.ndarray, track_id: int, x1: int, y1: int, x2: int, y2: int, metrics: dict) -> np.ndarray:
+        """
+        Visualize a tracked pedestrian and their metrics on the frame.
+        
+        Args:
+            frame: Input video frame
+            track_id: Unique identifier for the pedestrian
+            x1, y1, x2, y2: Bounding box coordinates
+            metrics: Dictionary of calculated metrics
+            
+        Returns:
+            Frame with visualization
+        """
+        # Determine box color based on whether pedestrian is in the zone
+        box_color = (0, 255, 0)  # Default green
+        if metrics['in_zone']:
+            box_color = (0, 0, 255)  # Red for pedestrians in crossing zone
+        
+        # Draw bounding box and ID
+        cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+        cv2.circle(frame, ((x1 + x2) // 2, y2), 5, (125, 125, 0))
+        
+        # Display metrics
+        cv2.putText(frame, f"Speed: {metrics['speed_kmh']:.1f} km/h", (x1, y2 + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
+        cv2.putText(frame, f"Distance: {metrics['distance_to_exit']} px", (x1, y2 + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1)
+        cv2.putText(frame, f"ID: {track_id} Dir: {metrics['direction']}", (x1, y2 + 45), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
+        
+        # For pedestrians in zone, show estimated remaining time
+        if metrics['in_zone'] and metrics['estimated_time_remaining'] < 999999:
+            cv2.putText(frame, f"Est: {metrics['estimated_time_remaining']:.1f}s", (x1, y2 + 65), 
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 1)
+        
+        # Print detailed metrics to console (could be logged to a file instead)
+        if metrics['direction']:
+            print(f"ID:{track_id}, Speed:{metrics['speed_kmh']:.1f}, Distance:{metrics['distance_to_exit']}, " 
+                  f"Dir:{metrics['direction']}, Time: {metrics['crossing_time']:.2f}, "
+                  f"In Zone: {metrics['in_zone']}, "
+                  f"Estimated Time Remaining: {metrics['estimated_time_remaining']:.2f}")
+        
+        return frame
+    
+    def _add_benchmark_info(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Add benchmark information to the frame.
+        
+        Args:
+            frame: Input video frame
+            
+        Returns:
+            Frame with benchmark visualization
+        """
+        # Calculate average latencies over the last 30 frames (or all available frames)
+        window_size = min(30, len(self.benchmarks['detection_latency']))
+        if window_size == 0:
+            return frame
+            
+        avg_detection = sum(self.benchmarks['detection_latency'][-window_size:]) / window_size * 1000
+        avg_tracking = sum(self.benchmarks['tracking_update_latency'][-window_size:]) / window_size * 1000
+        avg_prediction = sum(self.benchmarks['prediction_computation'][-window_size:]) / window_size * 1000
+        avg_signal = sum(self.benchmarks['signal_control_decision'][-window_size:]) / window_size * 1000
+        avg_total = sum(self.benchmarks['total_system_response'][-window_size:]) / window_size * 1000
+        avg_frame = sum(self.benchmarks['frame_processing_time'][-window_size:]) / window_size * 1000
+        
+        # Background for benchmark info
+        cv2.rectangle(frame, (320, 10), (635, 120), (0, 0, 0), -1)
+        cv2.rectangle(frame, (320, 10), (635, 120), (100, 100, 100), 1)
+        
+        # Add benchmark information to frame
+        y_offset = 30
+        cv2.putText(frame, f"Benchmark Metrics (ms):", (325, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        y_offset += 15
+        cv2.putText(frame, f"Detection Latency: {avg_detection:.1f}", (325, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        y_offset += 15
+        cv2.putText(frame, f"Tracking Update: {avg_tracking:.1f}", (325, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        y_offset += 15
+        cv2.putText(frame, f"Prediction Computation: {avg_prediction:.1f}", (325, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        y_offset += 15
+        cv2.putText(frame, f"Signal Control Decision: {avg_signal:.1f}", (325, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        y_offset += 15
+        cv2.putText(frame, f"Total System Response: {avg_total:.1f}", (325, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 255, 150), 1)
+        
+        return frame
+    
+    def export_benchmark_report(self, output_path="benchmark_report.csv"):
+        """
+        Export benchmark data to a CSV file.
+        
+        Args:
+            output_path: Path to save the benchmark report
+        """
+        if not self.enable_benchmarking:
+            print("Benchmarking was not enabled. No data to export.")
+            return
+            
+        if not any(self.benchmarks.values()):
+            print("No benchmark data collected yet.")
+            return
+        
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            
+            with open(output_path, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                # Write header
+                writer.writerow([
+                    'Frame', 
+                    'Detection Latency (ms)', 
+                    'Tracking Update Latency (ms)', 
+                    'Prediction Computation (ms)',
+                    'Signal Control Decision (ms)',
+                    'Total System Response (ms)',
+                    'Frame Processing Time (ms)'
+                ])
+                
+                # Write data
+                max_length = max(len(data) for data in self.benchmarks.values())
+                for i in range(max_length):
+                    writer.writerow([
+                        i,
+                        self.benchmarks['detection_latency'][i] * 1000 if i < len(self.benchmarks['detection_latency']) else None,
+                        self.benchmarks['tracking_update_latency'][i] * 1000 if i < len(self.benchmarks['tracking_update_latency']) else None,
+                        self.benchmarks['prediction_computation'][i] * 1000 if i < len(self.benchmarks['prediction_computation']) else None,
+                        self.benchmarks['signal_control_decision'][i] * 1000 if i < len(self.benchmarks['signal_control_decision']) else None,
+                        self.benchmarks['total_system_response'][i] * 1000 if i < len(self.benchmarks['total_system_response']) else None,
+                        self.benchmarks['frame_processing_time'][i] * 1000 if i < len(self.benchmarks['frame_processing_time']) else None
+                    ])
+                    
+            print(f"Benchmark report exported to {output_path}")
+            
+            # Generate summary statistics
+            self._generate_benchmark_summary()
+            
+        except Exception as e:
+            print(f"Error exporting benchmark report: {e}")
+    
+    def _generate_benchmark_summary(self):
+        """Generate and print a summary of benchmark statistics."""
+        if not self.enable_benchmarking:
+            return
+            
+        # Skip if no data
+        if not any(self.benchmarks.values()) or all(len(data) == 0 for data in self.benchmarks.values()):
+            print("No benchmark data available for summary.")
+            return
+        
+        print("\n===== BENCHMARK SUMMARY =====")
+        
+        # Convert to milliseconds for readability
+        detection_ms = [t * 1000 for t in self.benchmarks['detection_latency']]
+        tracking_ms = [t * 1000 for t in self.benchmarks['tracking_update_latency']]
+        prediction_ms = [t * 1000 for t in self.benchmarks['prediction_computation']]
+        signal_ms = [t * 1000 for t in self.benchmarks['signal_control_decision']]
+        total_ms = [t * 1000 for t in self.benchmarks['total_system_response']]
+        frame_ms = [t * 1000 for t in self.benchmarks['frame_processing_time']]
+        
+        metrics = {
+            "Detection Latency": detection_ms,
+            "Tracking Update Latency": tracking_ms,
+            "Prediction Computation": prediction_ms,
+            "Signal Control Decision": signal_ms,
+            "Total System Response": total_ms,
+            "Frame Processing Time": frame_ms
+        }
+        
+        print(f"{'Metric':<25} | {'Min (ms)':<10} | {'Max (ms)':<10} | {'Avg (ms)':<10} | {'Median (ms)':<10} | {'90th % (ms)':<10}")
+        print("-" * 85)
+        
+        for name, values in metrics.items():
+            if values:
+                min_val = min(values)
+                max_val = max(values)
+                avg_val = sum(values) / len(values)
+                median_val = sorted(values)[len(values) // 2]
+                percentile_90 = sorted(values)[int(len(values) * 0.9)]
+                
+                print(f"{name:<25} | {min_val:<10.2f} | {max_val:<10.2f} | {avg_val:<10.2f} | {median_val:<10.2f} | {percentile_90:<10.2f}")
+            else:
+                print(f"{name:<25} | {'N/A':<10} | {'N/A':<10} | {'N/A':<10} | {'N/A':<10} | {'N/A':<10}")
+        
+        print("=============================\n")
+    
     def mouse_callback(self, event, x, y, flags, param):
         """
         Mouse callback function for interactive coordinate display.
@@ -612,12 +889,21 @@ class PedestrianTracker:
         Main method to run the pedestrian tracking system.
         """
         try:
+            frame_count = 0
+            total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
             while self.cap.isOpened():
                 ret, frame = self.cap.read()
                 if not ret:
                     break
                 
                 self.frame_count += 1
+                frame_count += 1
+                
+                # Display progress periodically
+                if frame_count % 100 == 0:
+                    progress = (frame_count / total_frames) * 100 if total_frames > 0 else 0
+                    print(f"Processing: {progress:.1f}% complete ({frame_count}/{total_frames})")
                 
                 # Skip frames for performance
                 if self.frame_count % self.frame_skip != 0:
@@ -625,6 +911,10 @@ class PedestrianTracker:
                 
                 # Process the current frame
                 processed_frame = self.process_frame(frame)
+                
+                # Write frame to output video if export is enabled
+                if self.export_video and self.video_writer is not None:
+                    self.video_writer.write(processed_frame)
                 
                 # Display the processed frame
                 cv2.imshow("Pedestrian Tracking System", processed_frame)
@@ -645,10 +935,26 @@ class PedestrianTracker:
                     self.current_pedestrians_in_zone.clear()
                     self.completed_pedestrians.clear()
                     self.pedestrian_estimates.clear()
+                elif key == ord('s'):
+                    # Save the current frame as an image
+                    timestamp = time.strftime("%Y%m%d-%H%M%S")
+                    snapshot_path = f"snapshot_{timestamp}.jpg"
+                    cv2.imwrite(snapshot_path, processed_frame)
+                    print(f"Snapshot saved to {snapshot_path}")
+                elif key == ord('b') and self.enable_benchmarking:
+                    # Export benchmark data when 'b' is pressed
+                    self.export_benchmark_report()
                 
         finally:
             # Clean up resources
             self.cap.release()
+            if self.export_video and self.video_writer is not None:
+                self.video_writer.release()
+                print(f"Exported video saved to {self.export_path}")
+            # Export benchmark data if enabled
+            if self.enable_benchmarking:
+                self.export_benchmark_report()
+            
             cv2.destroyAllWindows()
             print("Pedestrian tracking completed.")
 
@@ -700,18 +1006,51 @@ class PedestrianAnalytics:
 
 def main():
     """Main function to run the pedestrian tracking system."""
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Pedestrian Tracking System with Dynamic Traffic Light')
+    parser.add_argument('--config', type=str, default="video_settings.json", help='Path to configuration file')
+    parser.add_argument('--model', type=str, default="yolov8n.pt", help='YOLO model to use')
+    parser.add_argument('--skip', type=int, default=5, help='Number of frames to skip')
+    parser.add_argument('--delay', type=int, default=5, help='Delay in seconds before triggering estimation')
+    parser.add_argument('--export', action='store_true', help='Export processed video')
+    parser.add_argument('--output', type=str, default="output_video.mp4", help='Path for exported video')
+    parser.add_argument('--benchmark', action='store_true', help='Enable performance benchmarking')
+    parser.add_argument('--benchmark-output', type=str, default="benchmark_report.csv", help='Path for benchmark report')
+    
+    
+    args = parser.parse_args()
+    
     try:
-        # Create and run the pedestrian tracker
+        # Create and run the pedestrian tracker with command line arguments
         tracker = PedestrianTracker(
-            config_path="video_settings.json",
-            yolo_model="yolov8n.pt",
-            frame_skip=5
+            config_path=args.config,
+            yolo_model=args.model,
+            frame_skip=args.skip,
+            export_video=args.export,
+            export_path=args.output,
+            enable_benchmarking=args.benchmark
         )
         
-        # Set custom parameters for the estimation system if needed
-        tracker.estimation_delay = 5  # seconds after first entry to trigger estimation
+        # Set custom parameters for the estimation system
+        tracker.estimation_delay = args.delay  # seconds after first entry to trigger estimation
         tracker.traffic_light_blink_interval = 0.5  # seconds between blinks
         
+        # Print information about keyboard controls
+        print("\n===== Keyboard Controls =====")
+        print("q: Quit the applidirection_upcation")
+        print("p: Pause/resume the video")
+        print("r: Reset the traffic light system")
+        print("s: Save a snapshot of the current frame")
+        if args.benchmark:
+            print("b: Export benchmark data")
+        print("===========================\n")
+        
+        if args.benchmark:
+            print("Benchmarking mode enabled. Performance metrics will be displayed and exported.")
+            print(f"Benchmark report will be saved to: {args.benchmark_output}")
+
         # Run the tracker
         tracker.run()
         
