@@ -70,10 +70,11 @@ Create a `video_settings.json` file with the following structure:
 
 ## Traffic Light System
 The system implements a dynamic traffic light control mechanism that responds to pedestrian presence and movement:
+bounding boxes of pedestrians were colored in greeen. Red if they are in zone, orange when estimating the slowest. 
 
-BLINKING_GREEN state: Initial state when pedestrians are first detected entering the crossing zone
-COUNTDOWN state: After monitoring for 10 seconds, calculates completion time for the slowest pedestrian
-GREEN state: When all pedestrians have cleared the crossing zone
+- BLINKING_GREEN state: Initial state when pedestrians are first detected entering the crossing zone
+- COUNTDOWN state: After monitoring for 10 seconds, calculates completion time for the slowest pedestrian
+- GREEN state: When all pedestrians have cleared the crossing zone
 
 The traffic light visualization appears in the top-left corner of the display, showing the current state and countdown timer when applicable. The system automatically adjusts timing based on real-time pedestrian tracking data.
 
