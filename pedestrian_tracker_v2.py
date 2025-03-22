@@ -74,15 +74,6 @@ class PedestrianTracker:
         self.detection_model = YOLO(yolo_model)
         self.tracker = DeepSort(max_age=10)  # Tracks objects for up to 10 frames
         
-        # Load configuration
-        self.video_profile = self._load_config(config_path)
-        
-        # Setup video capture
-        self.cap = self._setup_video_capture()
-        
-        # Define tracking zones based on configuration
-        self._setup_tracking_zones()
-        
         # Benchmarking parameters
         self.enable_benchmarking = enable_benchmarking
         if self.enable_benchmarking:
@@ -117,9 +108,10 @@ class PedestrianTracker:
         except FileNotFoundError:
             print(f"Configuration file not found at {config_path}!")
             try:
-                with open("CaptureFrameAttributes.py") as captureAttributes:
-                    exec(captureAttributes.read())
-                    # This would need proper handling in a production environment
+                import runpy
+                runpy.run_path('CaptureFrameAttributes.py')
+                return self._load_config(config_path)
+                # This would need proper handling in a production environment
             except FileNotFoundError:
                 print("Capture Attributes script missing!")
                 raise
@@ -895,6 +887,11 @@ class PedestrianTracker:
             while self.cap.isOpened():
                 ret, frame = self.cap.read()
                 if not ret:
+                    # if self.last_frame is not None:
+                    #     while True:  # Keep showing the last frame
+                    #         cv2.imshow('Video', self.last_frame)
+                    #         if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to quit
+                    #             break
                     break
                 
                 self.frame_count += 1
@@ -919,6 +916,8 @@ class PedestrianTracker:
                 # Display the processed frame
                 cv2.imshow("Pedestrian Tracking System", processed_frame)
                 cv2.setMouseCallback('Pedestrian Tracking System', self.mouse_callback)
+                
+                # self.last_frame = processed_frame.copy()  # Store the current frame
                 
                 # Handle key presses
                 key = cv2.waitKey(1)
