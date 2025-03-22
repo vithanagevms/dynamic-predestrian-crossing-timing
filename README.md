@@ -3,7 +3,7 @@
 A computer vision system that tracks pedestrians in video footage and measures system performance metrics.
 
 Demo video
-[https://youtu.be/-b4mw582Sy0 ](https://youtu.be/-b4mw582Sy0)
+[https://youtu.be/-b4mw582Sy0 ](https://youtu.be/-b4mw582Sy0) <br />
 [https://youtu.be/E1zu8EKmnNI](https://youtu.be/E1zu8EKmnNI)
 
 ## Features
